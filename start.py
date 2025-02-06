@@ -270,9 +270,6 @@ class DroneMessage():
         print(f"Throttle override: {throttle_pwm} µs")
 
 def main():
-    """
-    Run the INS Kalman filter with live drone sensor data.
-    """
     drone = DroneMessage('COM11')  # עדכן לפורט הנכון
     thread = threading.Thread(target=drone.get, daemon=True)
     thread.start()
