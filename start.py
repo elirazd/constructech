@@ -2,7 +2,8 @@ import numpy as np
 from pymavlink import mavutil
 import threading
 import time
-class DroneMessage():
+from pynput import keyboard
+class DroneController():
     """
     Connect to the MAVLink device and print out:
       - Pitch, Roll, Yaw from ATTITUDE
@@ -25,9 +26,15 @@ class DroneMessage():
             f"Component: {self.master.target_component})"
         )
         self.database = {}
-        self.offset_accel = 0
-        self.offset_gyro = 0
-        self.offset_mag = 0
+        self.offset_accel = 0 # Offset for IMU Accelometer
+        self.offset_gyro = 0 # Offset for IMU Gyrometer
+        self.offset_mag = 0 # Offset for IMU Magnitude
+        self.rc_channels = [65535] * 8  # Default no override
+        self.throttle = 1000  # Min throttle
+        self.roll = 1500       # Neutral
+        self.pitch = 1500      # Neutral
+        self.yaw = 1500        # Neutral
+        self.running = True
 
         # Request all data streams at 10 Hz.
         self.master.mav.request_data_stream_send(
@@ -72,10 +79,10 @@ class DroneMessage():
     
     def imu_offset(self, num_samples=20, gyro_threshold=0.01):
             """
-            מבצע איפוס לחיישנים על ידי חישוב ממוצע של 20 דגימות שבהן כל ערכי ה-Gyro הם אפס.
-            :param drone: אובייקט DroneMessage המשמש לאיסוף נתוני החיישנים
-            :param num_samples: מספר הדגימות שיש לאסוף
-            :param gyro_threshold: סף מתחתיו נחשב שהג'יירוסקופ הוא "אפס"
+            Performs a reset of the sensors by averaging 20 samples where all Gyro values ​​are zero.
+            :param drone: DroneMessage object used to collect sensor data
+            :param num_samples: Number of samples to collect
+            :param gyro_threshold: Threshold below which the gyro is considered to be "zero"
             """
             print("Search for 20 clean samples")
             
@@ -110,7 +117,7 @@ class DroneMessage():
 
     def imu(self):
         """
-        קריאת חיישני IMU והחסרת האפס שחושב.
+        Reading IMU sensors and subtracting the calculated zero.
         """
         try:
             imu_data = self.database['RAW_IMU']
@@ -131,6 +138,9 @@ class DroneMessage():
 
     
     def attitude(self):
+        """
+        Return Altitude of quadcopter - Roll, Pitch, Yaw
+        """
         try:
             attitude=self.database['ATTITUDE']
             return attitude['roll'], attitude['pitch'], attitude['yaw']
@@ -146,8 +156,7 @@ class DroneMessage():
         """
         # Check if mode is in the mode mapping
         if mode_name not in self.master.mode_mapping():
-            print(f"Mode {mode_name} not found in mode mapping. Available modes:")
-            print(list(self.master.mode_mapping().keys()))
+            print(f"Mode {mode_name} not found in mode mapping. Available modes: {list(self.master.mode_mapping().keys())}")
             return
 
         # Get mode ID from mode name
@@ -160,7 +169,7 @@ class DroneMessage():
             mode_id
         )
 
-        print(f"Attempted to set mode to {mode_name} (id: {mode_id}).")
+        print(f"Mode set to {mode_name} (id: {mode_id}).")
 
     def arm(self):
         """
@@ -180,6 +189,7 @@ class DroneMessage():
                 0, # param5
                 0, # param6
                 0) # param7
+        print("Armed.")
     
     def disarm(self):
         '''disarm motors (arducopter only)'''
@@ -198,9 +208,8 @@ class DroneMessage():
         
         # Wait and check if armed
         # Alternatively, you could read SYS_STATUS or HEARTBEAT to check arm status
-        print("Arming command sent. Waiting for vehicle to arm...")
-        time.sleep(1)
-
+        print("Disarmed.")
+  
     def takeoff(self, altitude=10.0):
         """
         Commands the vehicle to take off to the specified altitude (meters).
@@ -217,6 +226,7 @@ class DroneMessage():
             0, 0, 0, 0, 0, 0,                    # unused parameters
             altitude                             # final param: altitude
         )
+        print(f"Taking off to {altitude} meters.")
 
     def navController(self):
         try:
@@ -254,23 +264,64 @@ class DroneMessage():
         )
         print(f"Servo {channel} set to {pwm_value} PWM")
 
-    def rc_throttle_override(self, throttle_pwm):
-        """
-        Override RC channels. ArduCopter's throttle is on channel 3 by default.
-        throttle_pwm typically between 1000 (idle) and 2000 (max).
-        65535 means "no override" for that channel.
-        """
-        rc_channels = [65535]*8
-        rc_channels[2] = throttle_pwm  # channel 3 is index 2 in 0-based Python
+    def send_rc_override(self):
         self.master.mav.rc_channels_override_send(
             self.master.target_system,
             self.master.target_component,
-            *rc_channels
+            self.roll, self.pitch, self.throttle, self.yaw, 65535, 65535, 65535, 65535
         )
-        print(f"Throttle override: {throttle_pwm} µs")
+        print(f"Throttle: {self.throttle}, Roll: {self.roll}, Pitch: {self.pitch}, Yaw: {self.yaw}")
+    
+    def land(self):
+        self.master.mav.command_long_send(
+            self.master.target_system,
+            self.master.target_component,
+            mavutil.mavlink.MAV_CMD_NAV_LAND,
+            0, 0, 0, 0, 0, 0, 0
+        )
+        print("Landing initiated.")
+
+    def on_press(self, key):
+        try:
+            if key.char == 'w':
+                self.throttle = min(self.throttle + 50, 2000)
+            elif key.char == 's':
+                self.throttle = max(self.throttle - 50, 1000)
+            elif key.char == 'a':
+                self.yaw = max(self.yaw - 50, 1000)
+            elif key.char == 'd':
+                self.yaw = min(self.yaw + 50, 2000)
+            elif key.char == 't':
+                self.takeoff()
+            elif key.char == 'l':
+                self.land()
+            elif key.char == 'f':
+                self.arm()
+            elif key.char == 'g':
+                self.disarm()
+        except AttributeError:
+            if key == keyboard.Key.up:
+                self.pitch = min(self.pitch + 50, 2000)
+            elif key == keyboard.Key.down:
+                self.pitch = max(self.pitch - 50, 1000)
+            elif key == keyboard.Key.left:
+                self.roll = max(self.roll - 50, 1000)
+            elif key == keyboard.Key.right:
+                self.roll = min(self.roll + 50, 2000)
+            elif key == keyboard.Key.esc:
+                print("Exiting...")
+                self.running = False
+                return False
+        self.send_rc_override()
+
+    def start_control(self):
+        print("Keyboard Control Started. Use W/S (Throttle), A/D (Yaw), Arrow Keys (Pitch/Roll), T (Takeoff), L (Land), F (Arm), G (Disarm), Esc (Exit)")
+        with keyboard.Listener(on_press=self.on_press) as listener:
+            listener.join()
+
 
 def main():
-    drone = DroneMessage('COM11')  # עדכן לפורט הנכון
+    drone = DroneController('COM11')  # עדכן לפורט הנכון
     thread = threading.Thread(target=drone.get, daemon=True)
     thread.start()
     time.sleep(3)
@@ -278,25 +329,18 @@ def main():
     # 1. Set flight mode to Stabilize
     drone.set_mode("STABILIZE")
 
-    # 2. Arm motors
-    drone.arm()
+    # 3. Flight
+    control_thread = threading.Thread(target=drone.start_control)
+    control_thread.start()
+    control_thread.join()
 
-    # 3. Slowly raise throttle override
-    #    1000 = idle, 1500 = mid-throttle, 2000 = full
-    for pwm in range(1000, 1600, 100):
-        drone.rc_throttle_override(pwm)
-        time.sleep(2)
+    while True:
+        try:
+            print(drone.gps())
+        except KeyboardInterrupt:
+            print("\nExiting telemetry stream...")
+            break
 
-    # Maintain mid-throttle for a few seconds
-    time.sleep(5)
-
-    # 4. Lower throttle back to idle
-    drone.rc_throttle_override(1000)
-    time.sleep(3)
-
-    # Disarm if desired (some autopilots auto-disarm if throttle is zero)
-    drone.disarm()
-    print("Disarmed. Exiting.")
 
     
 if __name__ == "__main__":
