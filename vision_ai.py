@@ -87,7 +87,7 @@ class HTTPFileServer:
 
 class OpenAIHandler:
     def __init__(self):
-        _api_key_ ="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"
+        _api_key_ =""
         openai.api_key = _api_key_
 
     def send_request(self, message):
