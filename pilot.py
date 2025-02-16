@@ -283,6 +283,7 @@ class DroneController():
 
     def on_press(self, key):
         try:
+            print(self.database)
             if key.char == 'w':
                 self.throttle = min(self.throttle + 50, 2000)
             elif key.char == 's':
@@ -318,14 +319,15 @@ class DroneController():
         print("Keyboard Control Started. Use W/S (Throttle), A/D (Yaw), Arrow Keys (Pitch/Roll), T (Takeoff), L (Land), F (Arm), G (Disarm), Esc (Exit)")
         with keyboard.Listener(on_press=self.on_press) as listener:
             listener.join()
+            
 
 
 def main():
-    drone = DroneController('COM11')  # עדכן לפורט הנכון
+    drone = DroneController('COM12')  # עדכן לפורט הנכון
     thread = threading.Thread(target=drone.get, daemon=True)
     thread.start()
     time.sleep(3)
-    
+
     # 1. Set flight mode to Stabilize
     drone.set_mode("STABILIZE")
 
@@ -333,14 +335,6 @@ def main():
     control_thread = threading.Thread(target=drone.start_control)
     control_thread.start()
     control_thread.join()
-
-    while True:
-        try:
-            print(drone.gps())
-        except KeyboardInterrupt:
-            print("\nExiting telemetry stream...")
-            break
-
 
     
 if __name__ == "__main__":
